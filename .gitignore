@@ -49,5 +49,9 @@ Thumbs.db
 *.json
 objectionsapp-*.json
 
+# Temporary files
+secrets_temp.toml
+*_temp.toml
+
 # Environment variables
 .env

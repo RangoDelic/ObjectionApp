@@ -85,41 +85,64 @@ def load_objection_data():
         st.info("Please check your Google Sheets configuration and ensure the sheet is shared with your service account.")
         st.stop()
 
-# Generate embeddings for objections
-@st.cache_data
-def generate_embeddings(objections: List[str]) -> np.ndarray:
-    """Generate embeddings for all objections using OpenAI"""
-    embeddings = []
-    for objection in objections:
-        try:
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=objection
-            )
-            embeddings.append(response.data[0].embedding)
-        except Exception as e:
-            st.error(f"Error generating embedding for '{objection}': {e}")
-            embeddings.append(np.zeros(1536))  # Fallback embedding
-    return np.array(embeddings)
-
-def find_best_objection_match(user_query: str, df: pd.DataFrame, embeddings: np.ndarray) -> Tuple[int, float]:
-    """Find the best matching objection using semantic similarity"""
+def find_best_objection_match_with_openai(user_query: str, df: pd.DataFrame) -> Tuple[int, float]:
+    """Use OpenAI to directly find the best matching objection without pre-computed embeddings"""
     try:
-        query_response = client.embeddings.create(
-            model="text-embedding-3-small",
-            input=user_query
+        # Create a prompt with all objections for OpenAI to match against
+        objections_text = "\n".join([f"{i}: {obj}" for i, obj in enumerate(df['Objection'].tolist())])
+        
+        prompt = f"""You are helping match a customer objection to the most similar objection from a database.
+
+User's objection: "{user_query}"
+
+Database objections:
+{objections_text}
+
+Please respond with only the number (index) of the most similar objection from the database. Consider semantic meaning, not just exact word matches.
+
+Response format: Just the number (e.g., "5")"""
+
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=10,
+            temperature=0
         )
-        query_embedding = np.array(query_response.data[0].embedding).reshape(1, -1)
         
-        # Calculate cosine similarity
-        similarities = cosine_similarity(query_embedding, embeddings)[0]
-        best_match_idx = np.argmax(similarities)
-        similarity_score = similarities[best_match_idx]
+        match_idx = int(response.choices[0].message.content.strip())
         
-        return best_match_idx, similarity_score
+        # Calculate a rough similarity score (since we're using GPT matching, we'll estimate)
+        similarity_score = 0.85  # Assume good match since GPT chose it
+        
+        return match_idx, similarity_score
+        
     except Exception as e:
-        st.error(f"Error finding objection match: {e}")
-        return 0, 0.0
+        st.error(f"Error finding objection match with OpenAI: {e}")
+        # Fallback to simple text matching
+        return find_best_objection_match_simple(user_query, df)
+
+def find_best_objection_match_simple(user_query: str, df: pd.DataFrame) -> Tuple[int, float]:
+    """Simple text matching fallback without API calls"""
+    query_lower = user_query.lower()
+    best_match_idx = 0
+    best_similarity = 0.0
+    
+    for i, objection in enumerate(df['Objection'].tolist()):
+        objection_lower = objection.lower()
+        
+        # Simple keyword overlap scoring
+        query_words = set(query_lower.split())
+        objection_words = set(objection_lower.split())
+        
+        if query_words and objection_words:
+            overlap = len(query_words & objection_words)
+            similarity = overlap / max(len(query_words), len(objection_words))
+            
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match_idx = i
+    
+    return best_match_idx, best_similarity
 
 def format_solutions(row: pd.Series) -> List[str]:
     """Extract and format solutions from a DataFrame row"""
@@ -135,10 +158,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "objection_data" not in st.session_state:
     st.session_state.objection_data = load_objection_data()
-if "embeddings" not in st.session_state:
-    with st.spinner("Generating embeddings for objection matching..."):
-        objections = st.session_state.objection_data['Objection'].tolist()
-        st.session_state.embeddings = generate_embeddings(objections)
 
 # Sidebar
 st.sidebar.title("Goolets Objection Handler")
@@ -192,16 +211,17 @@ if prompt := st.chat_input("What objection are you facing?"):
             if filtered_df.empty:
                 response = "No objections found for the selected stage."
             else:
-                # Find best matching objection
-                if selected_stage != "All Stages":
-                    # Regenerate embeddings for filtered data
-                    filtered_objections = filtered_df['Objection'].tolist()
-                    filtered_embeddings = generate_embeddings(filtered_objections)
-                    best_idx, similarity = find_best_objection_match(prompt, filtered_df, filtered_embeddings)
-                    matched_row = filtered_df.iloc[best_idx]
-                else:
-                    best_idx, similarity = find_best_objection_match(prompt, df, st.session_state.embeddings)
-                    matched_row = df.iloc[best_idx]
+                # Find best matching objection using OpenAI or simple matching
+                working_df = filtered_df if selected_stage != "All Stages" else df
+                
+                # Try OpenAI matching first, fallback to simple matching
+                try:
+                    best_idx, similarity = find_best_objection_match_with_openai(prompt, working_df)
+                    matched_row = working_df.iloc[best_idx]
+                except:
+                    # If OpenAI fails, use simple text matching
+                    best_idx, similarity = find_best_objection_match_simple(prompt, working_df)
+                    matched_row = working_df.iloc[best_idx]
                 
                 # Format response
                 objection = matched_row['Objection']
