@@ -50,60 +50,73 @@ def init_google_sheets():
 
 
 def find_best_objection_match_with_openai(user_query: str, gc) -> Tuple[str, str, str, List[str]]:
-    """Use OpenAI to search the spreadsheet on-demand for matching objection"""
+    """Use OpenAI embeddings to find the most semantically similar objection"""
     try:
         # Get sheet data
         sheet_id = st.secrets["GOOGLE_SHEET_ID"]
         sheet_name = st.secrets.get("SHEET_NAME", "Sheet1")
         sheet = gc.open_by_key(sheet_id).worksheet(sheet_name)
-
-        # Get all data from the sheet
         all_data = sheet.get_all_records()
 
-        # Create a prompt for OpenAI to find the best match
-        objections_list = []
-        for i, row in enumerate(all_data):
-            if row.get('Objection', '').strip():
-                objections_list.append(f"{i}: {row['Objection']}")
+        # Filter valid objections
+        valid_objections = []
+        for row in all_data:
+            objection = row.get('Objection', '').strip()
+            if objection:
+                valid_objections.append(row)
 
-        objections_text = "\n".join(objections_list)
+        if not valid_objections:
+            return "", "", "0.0", []
 
-        prompt = f"""You are helping match a customer objection to the most similar objection from a database.
-
-User's objection: "{user_query}"
-
-Database objections:
-{objections_text}
-
-Please respond with only the number (index) of the most similar objection from the database. Consider semantic meaning, not just exact word matches.
-
-Response format: Just the number (e.g., "5")"""
-
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
-            temperature=0
+        # Get embedding for user query
+        query_response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=user_query
         )
+        query_embedding = np.array(query_response.data[0].embedding)
 
-        match_idx = int(response.choices[0].message.content.strip())
-        matched_row = all_data[match_idx]
+        # Get embeddings for all objections
+        objection_texts = [row['Objection'] for row in valid_objections]
+
+        # Process in batches to avoid token limits
+        batch_size = 100
+        all_embeddings = []
+
+        for i in range(0, len(objection_texts), batch_size):
+            batch = objection_texts[i:i+batch_size]
+            batch_response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=batch
+            )
+            batch_embeddings = [data.embedding for data in batch_response.data]
+            all_embeddings.extend(batch_embeddings)
+
+        # Convert to numpy array
+        objection_embeddings = np.array(all_embeddings)
+
+        # Calculate cosine similarities
+        similarities = cosine_similarity([query_embedding], objection_embeddings)[0]
+
+        # Find best match
+        best_match_idx = np.argmax(similarities)
+        best_similarity = similarities[best_match_idx]
+        best_match = valid_objections[best_match_idx]
 
         # Extract data from the matched row
-        objection = matched_row.get('Objection', '')
-        stage = matched_row.get('Stage', '')
+        objection = best_match.get('Objection', '')
+        stage = best_match.get('Stage', '')
 
         # Extract solutions
         solutions = []
         for i in range(1, 9):
-            solution = matched_row.get(f'Solution {i}', '')
+            solution = best_match.get(f'Solution {i}', '')
             if solution and str(solution).strip():
                 solutions.append(str(solution).strip())
 
-        return objection, stage, "0.85", solutions  # Return similarity as string
+        return objection, stage, f"{best_similarity:.3f}", solutions
 
     except Exception as e:
-        st.error(f"Error finding objection match with OpenAI: {e}")
+        st.error(f"Error finding objection match with OpenAI embeddings: {e}")
         return "", "", "0.0", []
 
 def find_best_objection_match_simple(user_query: str, gc) -> Tuple[str, str, str, List[str]]:
