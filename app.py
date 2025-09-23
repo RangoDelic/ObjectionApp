@@ -238,7 +238,6 @@ if prompt := st.chat_input("What objection are you facing?"):
                     # Format response
                     response = f"**Best Match:** {objection}\n\n"
                     response += f"**Stage:** {stage}\n\n"
-                    response += f"**Similarity:** {similarity}\n\n"
 
                     if solutions:
                         response += "**Solutions:**\n\n"
