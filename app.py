@@ -213,6 +213,7 @@ if "google_client" not in st.session_state:
     st.session_state.google_client = init_google_sheets()
 
 # Sidebar
+st.sidebar.image("1758712112554blob.jpg", width=200)
 st.sidebar.title("Goolets Objection Handler")
 st.sidebar.markdown("Ask about any yacht charter objection and get tailored solutions!")
 
