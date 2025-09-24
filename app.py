@@ -167,6 +167,44 @@ def find_best_objection_match_simple(user_query: str, gc) -> Tuple[str, str, str
         st.error(f"Error in fallback matching: {e}")
         return "", "", "0.0", []
 
+def generate_client_response(user_objection: str, matched_objection: str, solutions: List[str]) -> str:
+    """Generate a client-ready response based on the guidance solutions"""
+    if not solutions:
+        return ""
+
+    try:
+        solutions_text = "\n".join([f"- {solution}" for solution in solutions])
+
+        prompt = f"""You are a professional yacht charter sales expert. A client has raised this objection: "{user_objection}"
+
+The closest matching objection from our database is: "{matched_objection}"
+
+Here are the internal guidance solutions for handling this objection:
+{solutions_text}
+
+Based on this guidance, write a professional, warm, and persuasive response that you would send directly to the client. The response should:
+- Address their specific concern professionally
+- Be ready to copy-paste into an email or message
+- Sound natural and conversational
+- Maintain Goolets' professional but friendly tone
+- Be concise but comprehensive
+- Include specific benefits or reassurances where appropriate
+
+Write the response as if you're the yacht charter expert speaking directly to the client:"""
+
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.7
+        )
+
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        st.error(f"Error generating client response: {e}")
+        return ""
+
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -235,12 +273,19 @@ if prompt := st.chat_input("What objection are you facing?"):
                 if selected_stage != "All Stages" and stage != selected_stage:
                     response = f"No objections found for the selected stage: {selected_stage}"
                 elif objection:
+                    # Generate client-ready response
+                    client_response = generate_client_response(prompt, objection, solutions)
+
                     # Format response
                     response = f"**Best Match:** {objection}\n\n"
                     response += f"**Stage:** {stage}\n\n"
 
+                    if client_response:
+                        response += "**📧 Client Response (Ready to Copy/Paste):**\n\n"
+                        response += f"```\n{client_response}\n```\n\n"
+
                     if solutions:
-                        response += "**Solutions:**\n\n"
+                        response += "**📋 Internal Guidance:**\n\n"
                         for i, solution in enumerate(solutions, 1):
                             response += f"{i}. {solution}\n\n"
                     else:
