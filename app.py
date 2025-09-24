@@ -281,11 +281,11 @@ if prompt := st.chat_input("What objection are you facing?"):
                     response += f"**Stage:** {stage}\n\n"
 
                     if client_response:
-                        response += "**📧 Client Response (Ready to Copy/Paste):**\n\n"
+                        response += "**Client Response (Ready to Copy/Paste):**\n\n"
                         response += f"```\n{client_response}\n```\n\n"
 
                     if solutions:
-                        response += "**📋 Internal Guidance:**\n\n"
+                        response += "**Internal Guidance:**\n\n"
                         for i, solution in enumerate(solutions, 1):
                             response += f"{i}. {solution}\n\n"
                     else:
