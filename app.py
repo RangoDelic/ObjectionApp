@@ -9,10 +9,14 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Tuple
-import streamlit_analytics2 as sa2
-
-# Start analytics tracking
-sa2.start_tracking()
+# Analytics tracking (optional - won't crash if not available)
+try:
+    import streamlit_analytics2 as sa2
+    sa2.start_tracking()
+    ANALYTICS_ENABLED = True
+except ImportError:
+    ANALYTICS_ENABLED = False
+    sa2 = None
 
 # Configure Streamlit page
 st.set_page_config(
@@ -218,9 +222,13 @@ if "google_client" not in st.session_state:
 
 # Track app initialization
 if "analytics_initialized" not in st.session_state:
-    sa2.track_event("app_initialized", {
-        "google_sheets_connected": st.session_state.google_client is not None
-    })
+    if ANALYTICS_ENABLED:
+        try:
+            sa2.track_event("app_initialized", {
+                "google_sheets_connected": st.session_state.google_client is not None
+            })
+        except Exception:
+            pass  # Silently fail if analytics don't work
     st.session_state.analytics_initialized = True
 
 # Sidebar
@@ -240,18 +248,29 @@ selected_stage = st.sidebar.selectbox(
 )
 
 # Track stage filter usage
-if selected_stage != "All Stages":
-    sa2.track_event("stage_filter_used", {"stage": selected_stage})
+if selected_stage != "All Stages" and ANALYTICS_ENABLED:
+    try:
+        sa2.track_event("stage_filter_used", {"stage": selected_stage})
+    except Exception:
+        pass
 
 # Clear chat button
 if st.sidebar.button("Clear Chat"):
-    sa2.track_event("clear_chat_clicked")
+    if ANALYTICS_ENABLED:
+        try:
+            sa2.track_event("clear_chat_clicked")
+        except Exception:
+            pass
     st.session_state.messages = []
     st.rerun()
 
 # Refresh connection button
 if st.sidebar.button("Refresh Connection"):
-    sa2.track_event("refresh_connection_clicked")
+    if ANALYTICS_ENABLED:
+        try:
+            sa2.track_event("refresh_connection_clicked")
+        except Exception:
+            pass
     st.session_state.google_client = init_google_sheets()
     st.rerun()
 
@@ -267,11 +286,15 @@ for message in st.session_state.messages:
 # Chat input
 if prompt := st.chat_input("What objection are you facing?"):
     # Track user query
-    sa2.track_event("user_query_submitted", {
-        "query_length": len(prompt),
-        "query_word_count": len(prompt.split()),
-        "selected_stage": selected_stage
-    })
+    if ANALYTICS_ENABLED:
+        try:
+            sa2.track_event("user_query_submitted", {
+                "query_length": len(prompt),
+                "query_word_count": len(prompt.split()),
+                "selected_stage": selected_stage
+            })
+        except Exception:
+            pass
 
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -285,29 +308,49 @@ if prompt := st.chat_input("What objection are you facing?"):
 
             if not gc:
                 response = "Google Sheets connection not available. Please check your configuration."
-                sa2.track_event("google_sheets_error")
+                if ANALYTICS_ENABLED:
+                    try:
+                        sa2.track_event("google_sheets_error")
+                    except Exception:
+                        pass
             else:
                 # Try OpenAI matching first, fallback to simple matching
                 try:
                     objection, stage, similarity, solutions = find_best_objection_match_with_openai(prompt, gc)
-                    sa2.track_event("openai_matching_used")
+                    if ANALYTICS_ENABLED:
+                        try:
+                            sa2.track_event("openai_matching_used")
+                        except Exception:
+                            pass
                 except Exception as e:
                     # If OpenAI fails, use simple text matching
-                    sa2.track_event("openai_fallback_to_simple", {"error_type": str(type(e).__name__)})
+                    if ANALYTICS_ENABLED:
+                        try:
+                            sa2.track_event("openai_fallback_to_simple", {"error_type": str(type(e).__name__)})
+                        except Exception:
+                            pass
                     objection, stage, similarity, solutions = find_best_objection_match_simple(prompt, gc)
 
                 # Filter by stage if selected
                 if selected_stage != "All Stages" and stage != selected_stage:
                     response = f"No objections found for the selected stage: {selected_stage}"
-                    sa2.track_event("no_match_stage_filter", {"selected_stage": selected_stage})
+                    if ANALYTICS_ENABLED:
+                        try:
+                            sa2.track_event("no_match_stage_filter", {"selected_stage": selected_stage})
+                        except Exception:
+                            pass
                 elif objection:
                     # Track successful match
-                    sa2.track_event("objection_match_found", {
-                        "matched_objection": objection[:50] + "..." if len(objection) > 50 else objection,
-                        "stage": stage,
-                        "similarity": similarity,
-                        "num_solutions": len(solutions)
-                    })
+                    if ANALYTICS_ENABLED:
+                        try:
+                            sa2.track_event("objection_match_found", {
+                                "matched_objection": objection[:50] + "..." if len(objection) > 50 else objection,
+                                "stage": stage,
+                                "similarity": similarity,
+                                "num_solutions": len(solutions)
+                            })
+                        except Exception:
+                            pass
 
                     # Generate client-ready response
                     client_response = generate_client_response(prompt, objection, solutions)
@@ -319,7 +362,11 @@ if prompt := st.chat_input("What objection are you facing?"):
                     if client_response:
                         response += "**Client Response (Ready to Copy/Paste):**\n\n"
                         response += f"```\n{client_response}\n```\n\n"
-                        sa2.track_event("client_response_generated", {"has_client_response": True})
+                        if ANALYTICS_ENABLED:
+                            try:
+                                sa2.track_event("client_response_generated", {"has_client_response": True})
+                            except Exception:
+                                pass
 
                     if solutions:
                         response += "**Internal Guidance:**\n\n"
@@ -329,7 +376,11 @@ if prompt := st.chat_input("What objection are you facing?"):
                         response += "No solutions available for this objection."
                 else:
                     response = "No matching objection found. Please try rephrasing your question."
-                    sa2.track_event("no_objection_match", {"query_length": len(prompt)})
+                    if ANALYTICS_ENABLED:
+                        try:
+                            sa2.track_event("no_objection_match", {"query_length": len(prompt)})
+                        except Exception:
+                            pass
         
         st.markdown(response)
     
@@ -340,8 +391,8 @@ if prompt := st.chat_input("What objection are you facing?"):
 st.markdown("---")
 st.markdown("*Built for Goolets yacht charter objection handling*")
 
-# Analytics info (only visible in sidebar when analytics are on)
-if st.sidebar.expander("📊 Analytics Tracked", expanded=False):
+# Analytics info (only show if analytics are enabled)
+if ANALYTICS_ENABLED and st.sidebar.expander("📊 Analytics Tracked", expanded=False):
     st.sidebar.write("""
     **User Interactions:**
     - App initializations
