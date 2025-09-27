@@ -14,7 +14,7 @@ import uuid
 
 # Analytics tracking via Google Sheets
 def track_analytics_event(event_type: str, event_data: dict = None):
-    """Track analytics events by logging to Google Sheets"""
+    """Track analytics events by logging to Analytics tab in the same Google Sheet"""
     if st.session_state.get("google_client") is None:
         return  # Skip analytics if no Google Sheets connection
 
@@ -23,37 +23,99 @@ def track_analytics_event(event_type: str, event_data: dict = None):
         if "session_id" not in st.session_state:
             st.session_state.session_id = str(uuid.uuid4())[:8]
 
-        # Prepare analytics data
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        analytics_row = [
-            timestamp,
-            st.session_state.session_id,
-            event_type,
-            json.dumps(event_data) if event_data else "",
-            st.session_state.get("user_ip", "unknown")
-        ]
-
-        # Get analytics sheet (create if doesn't exist)
+        # Use the SAME Google Sheet as objections data
         gc = st.session_state.google_client
-        sheet_id = st.secrets["GOOGLE_SHEET_ID"]
+        sheet_id = st.secrets["GOOGLE_SHEET_ID"]  # Same sheet as your objections
+        spreadsheet = gc.open_by_key(sheet_id)
 
+        # Get or create Analytics worksheet in the same spreadsheet
         try:
-            # Try to access existing analytics sheet
-            analytics_sheet = gc.open_by_key(sheet_id).worksheet("Analytics")
+            analytics_sheet = spreadsheet.worksheet("Analytics")
         except:
-            # Create analytics sheet if it doesn't exist
-            spreadsheet = gc.open_by_key(sheet_id)
+            # Create Analytics tab with proper formatting for hundreds of entries
             analytics_sheet = spreadsheet.add_worksheet(
                 title="Analytics",
-                rows=1000,
-                cols=5
+                rows=2000,  # Space for many entries
+                cols=8      # Well-organized columns
             )
-            # Add headers
-            analytics_sheet.append_row([
-                "Timestamp", "Session_ID", "Event_Type", "Event_Data", "User_IP"
-            ])
 
-        # Log the event
+            # Set up clear headers
+            headers = [
+                "Date", "Time", "Session_ID", "Event",
+                "Details", "Query_Preview", "Stage", "Result"
+            ]
+            analytics_sheet.append_row(headers)
+
+            # Format header row - bold, background color, freeze
+            analytics_sheet.format("A1:H1", {
+                "backgroundColor": {"red": 0.2, "green": 0.6, "blue": 0.8},
+                "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                "horizontalAlignment": "CENTER"
+            })
+
+            # Freeze header row
+            analytics_sheet.freeze(rows=1)
+
+            # Set column widths for readability
+            analytics_sheet.update_dimension_range("A:A", "COLUMNS", {"pixelSize": 100})  # Date
+            analytics_sheet.update_dimension_range("B:B", "COLUMNS", {"pixelSize": 80})   # Time
+            analytics_sheet.update_dimension_range("C:C", "COLUMNS", {"pixelSize": 90})   # Session
+            analytics_sheet.update_dimension_range("D:D", "COLUMNS", {"pixelSize": 150})  # Event
+            analytics_sheet.update_dimension_range("E:E", "COLUMNS", {"pixelSize": 200})  # Details
+            analytics_sheet.update_dimension_range("F:F", "COLUMNS", {"pixelSize": 250})  # Query
+            analytics_sheet.update_dimension_range("G:G", "COLUMNS", {"pixelSize": 100})  # Stage
+            analytics_sheet.update_dimension_range("H:H", "COLUMNS", {"pixelSize": 120})  # Result
+
+        # Prepare clean, readable analytics data
+        now = datetime.datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H:%M:%S")
+
+        # Clean event type for display
+        event_display = event_type.replace("_", " ").title()
+
+        # Extract key details for easy reading
+        details = ""
+        query_preview = ""
+        stage = ""
+        result = ""
+
+        if event_data:
+            # Query details
+            if "query_length" in event_data:
+                details = f"Length: {event_data['query_length']} chars"
+            if "query_preview" in event_data:
+                query_preview = event_data["query_preview"]
+
+            # Stage info
+            stage = event_data.get("stage", event_data.get("selected_stage", ""))
+
+            # Result indicators
+            if event_type == "objection_match_found":
+                result = f"✅ Found ({event_data.get('similarity', 'N/A')})"
+            elif event_type == "no_objection_match":
+                result = "❌ No Match"
+            elif event_type == "openai_matching_used":
+                result = "✅ OpenAI"
+            elif event_type == "openai_fallback_to_simple":
+                result = "⚠️ Fallback"
+            elif event_type == "client_response_generated":
+                result = "✅ Generated"
+            elif event_type in ["clear_chat_clicked", "refresh_connection_clicked", "stage_filter_used"]:
+                result = "✅ Action"
+
+        analytics_row = [
+            date_str,
+            time_str,
+            st.session_state.session_id,
+            event_display,
+            details,
+            query_preview,
+            stage,
+            result
+        ]
+
+        # Add the row to Analytics tab
         analytics_sheet.append_row(analytics_row)
 
     except Exception as e:
