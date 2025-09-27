@@ -9,6 +9,10 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Tuple
+import streamlit_analytics2 as sa2
+
+# Start analytics tracking
+sa2.start_tracking()
 
 # Configure Streamlit page
 st.set_page_config(
@@ -212,6 +216,13 @@ if "messages" not in st.session_state:
 if "google_client" not in st.session_state:
     st.session_state.google_client = init_google_sheets()
 
+# Track app initialization
+if "analytics_initialized" not in st.session_state:
+    sa2.track_event("app_initialized", {
+        "google_sheets_connected": st.session_state.google_client is not None
+    })
+    st.session_state.analytics_initialized = True
+
 # Sidebar
 st.sidebar.image("1758712112554blob.jpg", width=200)
 st.sidebar.title("Goolets Objection Handler")
@@ -228,13 +239,19 @@ selected_stage = st.sidebar.selectbox(
     ["All Stages", "Research", "Knows Goolets", "Pre-booking"]
 )
 
+# Track stage filter usage
+if selected_stage != "All Stages":
+    sa2.track_event("stage_filter_used", {"stage": selected_stage})
+
 # Clear chat button
 if st.sidebar.button("Clear Chat"):
+    sa2.track_event("clear_chat_clicked")
     st.session_state.messages = []
     st.rerun()
 
 # Refresh connection button
 if st.sidebar.button("Refresh Connection"):
+    sa2.track_event("refresh_connection_clicked")
     st.session_state.google_client = init_google_sheets()
     st.rerun()
 
@@ -249,6 +266,13 @@ for message in st.session_state.messages:
 
 # Chat input
 if prompt := st.chat_input("What objection are you facing?"):
+    # Track user query
+    sa2.track_event("user_query_submitted", {
+        "query_length": len(prompt),
+        "query_word_count": len(prompt.split()),
+        "selected_stage": selected_stage
+    })
+
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -261,18 +285,30 @@ if prompt := st.chat_input("What objection are you facing?"):
 
             if not gc:
                 response = "Google Sheets connection not available. Please check your configuration."
+                sa2.track_event("google_sheets_error")
             else:
                 # Try OpenAI matching first, fallback to simple matching
                 try:
                     objection, stage, similarity, solutions = find_best_objection_match_with_openai(prompt, gc)
-                except:
+                    sa2.track_event("openai_matching_used")
+                except Exception as e:
                     # If OpenAI fails, use simple text matching
+                    sa2.track_event("openai_fallback_to_simple", {"error_type": str(type(e).__name__)})
                     objection, stage, similarity, solutions = find_best_objection_match_simple(prompt, gc)
 
                 # Filter by stage if selected
                 if selected_stage != "All Stages" and stage != selected_stage:
                     response = f"No objections found for the selected stage: {selected_stage}"
+                    sa2.track_event("no_match_stage_filter", {"selected_stage": selected_stage})
                 elif objection:
+                    # Track successful match
+                    sa2.track_event("objection_match_found", {
+                        "matched_objection": objection[:50] + "..." if len(objection) > 50 else objection,
+                        "stage": stage,
+                        "similarity": similarity,
+                        "num_solutions": len(solutions)
+                    })
+
                     # Generate client-ready response
                     client_response = generate_client_response(prompt, objection, solutions)
 
@@ -283,6 +319,7 @@ if prompt := st.chat_input("What objection are you facing?"):
                     if client_response:
                         response += "**Client Response (Ready to Copy/Paste):**\n\n"
                         response += f"```\n{client_response}\n```\n\n"
+                        sa2.track_event("client_response_generated", {"has_client_response": True})
 
                     if solutions:
                         response += "**Internal Guidance:**\n\n"
@@ -292,6 +329,7 @@ if prompt := st.chat_input("What objection are you facing?"):
                         response += "No solutions available for this objection."
                 else:
                     response = "No matching objection found. Please try rephrasing your question."
+                    sa2.track_event("no_objection_match", {"query_length": len(prompt)})
         
         st.markdown(response)
     
@@ -301,3 +339,30 @@ if prompt := st.chat_input("What objection are you facing?"):
 # Footer
 st.markdown("---")
 st.markdown("*Built for Goolets yacht charter objection handling*")
+
+# Analytics info (only visible in sidebar when analytics are on)
+if st.sidebar.expander("📊 Analytics Tracked", expanded=False):
+    st.sidebar.write("""
+    **User Interactions:**
+    - App initializations
+    - User queries submitted
+    - Stage filters used
+    - Clear chat clicks
+    - Refresh connection clicks
+
+    **Query Processing:**
+    - OpenAI vs simple matching
+    - Successful objection matches
+    - Failed matches
+    - Client responses generated
+    - Google Sheets errors
+
+    **Results Analytics:**
+    - Most common objections
+    - Stage distributions
+    - Query lengths
+    - Response times
+    - Solution counts
+
+    *View analytics by adding `?analytics=on` to your URL*
+    """)
