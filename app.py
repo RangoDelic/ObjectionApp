@@ -301,6 +301,7 @@ Based on this guidance, write a professional, warm, and persuasive response that
 - Maintain Goolets' professional but friendly tone
 - Be concise but comprehensive
 - Include specific benefits or reassurances where appropriate
+- IMPORTANT: Write the response in English, regardless of the language of the client's objection
 
 Write the response as if you're the yacht charter expert speaking directly to the client:"""
 
