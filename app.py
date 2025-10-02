@@ -279,13 +279,43 @@ def find_best_objection_match_simple(user_query: str, gc) -> Tuple[str, str, str
         st.error(f"Error in fallback matching: {e}")
         return "", "", "0.0", []
 
-def generate_client_response(user_objection: str, matched_objection: str, solutions: List[str]) -> str:
-    """Generate a client-ready response based on the guidance solutions"""
+def generate_client_response(user_objection: str, matched_objection: str, solutions: List[str], output_format: str = "Email") -> str:
+    """Generate a client-ready response based on the guidance solutions and desired output format"""
     if not solutions:
         return ""
 
     try:
         solutions_text = "\n".join([f"- {solution}" for solution in solutions])
+
+        # Format-specific instructions
+        format_instructions = {
+            "Email": """- Write as a professional email response
+- Use proper email etiquette with greeting and closing
+- Be detailed and comprehensive
+- Maintain formal yet friendly tone
+- Include all relevant details and benefits""",
+            "Instagram Post": """- Write as an engaging Instagram post or caption
+- Use short paragraphs and line breaks for readability
+- Include a compelling hook at the start
+- Can use 1-2 relevant emojis if appropriate
+- Keep it conversational and engaging
+- Limit to 150-200 words
+- Add a call-to-action at the end""",
+            "Facebook Post": """- Write as an engaging Facebook post
+- Use a conversational, friendly tone
+- Break into readable paragraphs
+- Can use emojis if appropriate
+- Include engaging opening and call-to-action
+- Limit to 200-250 words
+- Make it shareable and relatable""",
+            "Blog Post": """- Write as a section of a blog post
+- Use a professional yet conversational tone
+- Include clear structure with potential subheadings
+- Be more detailed and informative
+- Provide context and background where helpful
+- Can be 300-400 words
+- Focus on educating and informing the reader"""
+        }
 
         prompt = f"""You are a professional yacht charter sales expert. A client has raised this objection: "{user_objection}"
 
@@ -294,21 +324,22 @@ The closest matching objection from our database is: "{matched_objection}"
 Here are the internal guidance solutions for handling this objection:
 {solutions_text}
 
-Based on this guidance, write a professional, warm, and persuasive response that you would send directly to the client. The response should:
+Based on this guidance, write a response formatted for {output_format}. The response should:
 - Address their specific concern professionally
-- Be ready to copy-paste into an email or message
+- Be ready to copy-paste directly
 - Sound natural and conversational
 - Maintain Goolets' professional but friendly tone
-- Be concise but comprehensive
-- Include specific benefits or reassurances where appropriate
 - IMPORTANT: Write the response in English, regardless of the language of the client's objection
+
+FORMAT-SPECIFIC REQUIREMENTS for {output_format}:
+{format_instructions.get(output_format, format_instructions["Email"])}
 
 Write the response as if you're the yacht charter expert speaking directly to the client:"""
 
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
+            max_tokens=500,
             temperature=0.7
         )
 
@@ -324,6 +355,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "google_client" not in st.session_state:
     st.session_state.google_client = init_google_sheets()
+if "output_format" not in st.session_state:
+    st.session_state.output_format = None
 
 # Track app initialization
 if "analytics_initialized" not in st.session_state:
@@ -341,6 +374,21 @@ if not st.session_state.google_client:
     st.sidebar.error("Google Sheets not configured")
 else:
     st.sidebar.success("Connected to Google Sheets")
+
+# Output format selector (REQUIRED)
+st.sidebar.markdown("### Select Output Format")
+st.sidebar.markdown("*Required: Choose where you'll use this response*")
+output_format = st.sidebar.radio(
+    "Response Format",
+    ["Email", "Instagram Post", "Facebook Post", "Blog Post"],
+    index=None,
+    key="output_format_selector",
+    help="Select the format for your response before asking a question"
+)
+
+# Update session state with selected format
+if output_format:
+    st.session_state.output_format = output_format
 
 # Stage filter (static options since we search on-demand)
 selected_stage = st.sidebar.selectbox(
@@ -368,18 +416,24 @@ if st.sidebar.button("Refresh Connection"):
 st.title("Goolets Objection Handler")
 st.markdown("Ask me about any yacht charter objection, and I'll provide you with proven solutions!")
 
+# Check if format is selected
+if not st.session_state.output_format:
+    st.warning("⚠️ Please select an output format in the sidebar before asking a question.")
+
 # Display chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
-if prompt := st.chat_input("What objection are you facing?"):
+# Chat input - disabled if no format selected
+chat_disabled = not st.session_state.output_format
+if prompt := st.chat_input("What objection are you facing?", disabled=chat_disabled):
     # Track user query
     track_analytics_event("user_query_submitted", {
         "query_length": len(prompt),
         "query_word_count": len(prompt.split()),
         "selected_stage": selected_stage,
+        "output_format": st.session_state.output_format,
         "query_preview": prompt[:50] + "..." if len(prompt) > 50 else prompt
     })
 
@@ -416,20 +470,24 @@ if prompt := st.chat_input("What objection are you facing?"):
                         "matched_objection": objection[:50] + "..." if len(objection) > 50 else objection,
                         "stage": stage,
                         "similarity": similarity,
-                        "num_solutions": len(solutions)
+                        "num_solutions": len(solutions),
+                        "output_format": st.session_state.output_format
                     })
 
-                    # Generate client-ready response
-                    client_response = generate_client_response(prompt, objection, solutions)
+                    # Generate client-ready response with selected format
+                    client_response = generate_client_response(prompt, objection, solutions, st.session_state.output_format)
 
                     # Format response
                     response = f"**Best Match:** {objection}\n\n"
                     response += f"**Stage:** {stage}\n\n"
 
                     if client_response:
-                        response += "**Client Response (Ready to Copy/Paste):**\n\n"
+                        response += f"**{st.session_state.output_format} Response (Ready to Copy/Paste):**\n\n"
                         response += f"```\n{client_response}\n```\n\n"
-                        track_analytics_event("client_response_generated", {"has_client_response": True})
+                        track_analytics_event("client_response_generated", {
+                            "has_client_response": True,
+                            "output_format": st.session_state.output_format
+                        })
 
                     if solutions:
                         response += "**Internal Guidance:**\n\n"
