@@ -377,7 +377,6 @@ else:
 
 # Output format selector (REQUIRED)
 st.sidebar.markdown("### Select Output Format")
-st.sidebar.markdown("*Required: Choose where you'll use this response*")
 output_format = st.sidebar.radio(
     "Response Format",
     ["Email", "Instagram Post", "Facebook Post", "Blog Post"],
